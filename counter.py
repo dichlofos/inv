@@ -1,3 +1,5 @@
+# coding: utf-8
+
 from datetime import timedelta
 
 from tinkoff.invest import utils as tiu
@@ -15,7 +17,7 @@ from tinkoff.invest import OperationType
 # from google.protobuf.timestamp_pb2 import Timestamp
 
 
-TOKEN = open('/home/mvel/work/settings/pl/tin.txt').read().strip()
+TOKEN = open('.token.txt').read().strip()
 
 
 _PAPERS_BLACKLIST = {
