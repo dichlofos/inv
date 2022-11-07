@@ -17,6 +17,8 @@ from tinkoff.invest import GetOperationsByCursorRequest
 from tinkoff.invest import OperationState
 from tinkoff.invest import OperationType
 
+# from tinkoff.invest import
+
 # from google.protobuf.timestamp_pb2 import Timestamp
 
 
@@ -27,13 +29,90 @@ _PAPERS_BLACKLIST = u.tokenize_file("papers_blacklist.ini", ignore_comments=True
 
 unique_names = set()
 
+NANOS_IN_ONE = 1_000_000_000
+
+
+class Item(object):
+    def __init__(self, name, figi):
+        self.name = name
+        self.figi = figi
+
+
+class Amount(object):
+    def __init__(self, units=0, nano=0, quantity=None):
+        if quantity is not None:
+            self.units = quantity.units
+            self.nano = quantity.nano
+            assert units == 0 and nano == 0
+            return
+
+        self.units = units
+        self.nano = nano
+
+    def add(self, other):
+        self.units += other.units
+        self.nano += other.nano
+
+        # normalize money
+        while abs(self.nano) > NANOS_IN_ONE:
+            if self.nano >= NANOS_IN_ONE:
+                self.units += 1
+                self.nano -= NANOS_IN_ONE
+
+            if self.nano <= -NANOS_IN_ONE:
+                self.units -= 1
+                self.nano += NANOS_IN_ONE
+
+    def __str__(self):
+        return "{}.{.5f}".format(self.units, self.nano / float(NANOS_IN_ONE))
+
+
+class ItemStore(object):
+    def __init__(self):
+        self.store_by_name = {}
+        self.store_by_figi = {}
+        self.op_counter = 0
+
+    def add_op(self, item):
+        if item.figi not in self.store_by_figi:
+            self.store_by_figi[item.figi] = Amount()
+
+        if item.name not in self.store_by_name:
+            self.store_by_name[item.name] = Amount()
+
+        self.op_counter += 1
+        self.store_by_figi[item.figi].add(Amount(quantity=item.payment))
+        self.store_by_figi[item.figi].add(Amount(quantity=item.commission))
+
+    def dump(self):
+        for figi, item in self.store_by_figi.items():
+            print(figi, item, item.op_counter)
+        print()
+
 
 def calculate_total_profit(client, days=30, verbose_level=0):
     print("Days ago to count from: {}".format(days))
 
     accs = client.users.get_accounts()
     a = accs.accounts[0]
-    # print(a.id)
+    # print(a)
+
+    item_store = ItemStore()
+
+    portfolio = client.operations.get_portfolio(account_id=a.id)
+
+    for position in portfolio.positions:
+        if position.blocked:
+            continue
+
+        if position.current_price.currency != 'rub':
+            continue
+
+        if position.instrument_type != 'share':
+            continue
+
+        print(position)
+        print()
 
     def get_request(cursor=""):
         return GetOperationsByCursorRequest(
@@ -44,13 +123,13 @@ def calculate_total_profit(client, days=30, verbose_level=0):
 
     operations = client.operations.get_operations_by_cursor(get_request())
     total_units = 0
-    total_nanos = 0
+    total_nano = 0
 
     total_commission_units = 0
-    total_commission_nanos = 0
+    total_commission_nano = 0
 
     sum_by_name_units = {}
-    sum_by_name_nanos = {}
+    sum_by_name_nano = {}
 
     op_counter = 0
     while True:
@@ -93,28 +172,40 @@ def calculate_total_profit(client, days=30, verbose_level=0):
             ):
                 name = "DIV"
 
+            if (
+                item.type == OperationType.OPERATION_TYPE_WRITING_OFF_VARMARGIN or
+                item.type == OperationType.OPERATION_TYPE_MARGIN_FEE
+            ):
+                continue
+
             if not name:
                 print(item)
                 assert False
 
+            print(item.figi)
+
             unique_names.add(name)
 
             units = item.payment.units + item.commission.units
-            nanos = item.payment.nano + item.commission.nano
+            nano = item.payment.nano + item.commission.nano
+
+            # new
+            item_store.add_op(item)
+
             total_units += units
-            total_nanos += nanos
+            total_nano += nano
 
             total_commission_units += item.commission.units
-            total_commission_nanos += item.commission.nano
+            total_commission_nano += item.commission.nano
 
             if name not in sum_by_name_units:
                 sum_by_name_units[name] = 0
 
-            if name not in sum_by_name_nanos:
-                sum_by_name_nanos[name] = 0
+            if name not in sum_by_name_nano:
+                sum_by_name_nano[name] = 0
 
             sum_by_name_units[name] += units
-            sum_by_name_nanos[name] += nanos
+            sum_by_name_nano[name] += nano
 
         if not operations.next_cursor:
             break
@@ -143,7 +234,7 @@ def calculate_total_profit(client, days=30, verbose_level=0):
     print("{:50}{:10.2f}".format("Total mined:", total_units))
     print("{:50}{:10.2f}".format(
         "Total commission:",
-        total_commission_units + total_nanos / 1_000_000_000
+        total_commission_units + total_nano / NANOS_IN_ONE
     ))
 
 
