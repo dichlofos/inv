@@ -44,6 +44,7 @@ class Amount(object):
         if quantity is not None:
             self.units = quantity.units
             self.nano = quantity.nano
+            print("Amount:", self.units, self.nano / NANOS_IN_ONE)
             assert units == 0 and nano == 0
             return
 
@@ -53,10 +54,24 @@ class Amount(object):
     def add(self, other, inc_counter=True):
         self.units += other.units
         self.nano += other.nano
-        if inc_counter:
+        if inc_counter and (other.units or other.nano):
+            # only non-zero amount
             self.op_counter += 1
+        self._normalize()
+        print("AFTER ADD", str(self))
+        return self
 
-        # normalize money
+    def mul(self, price):
+        new_units = self.units * price.units
+        new_nano = self.nano * price.units + self.units * price.nano + self.nano * price.nano
+        # do not glue with previous lines
+        self.units = new_units
+        self.nano = new_nano
+        self._normalize()
+        print("AFTER MUL", str(self))
+        return self
+
+    def _normalize(self):
         while abs(self.nano) > NANOS_IN_ONE:
             if self.nano >= NANOS_IN_ONE:
                 self.units += 1
@@ -75,6 +90,16 @@ class ItemStore(object):
         self.store_by_figi = {}
         self.figi_to_name = {}
 
+    def add_portfolio_item(self, item):
+        if item.figi not in self.store_by_figi:
+            self.store_by_figi[item.figi] = Amount()
+
+        self.store_by_figi[item.figi].add(
+            Amount(
+                quantity=item.quantity
+            ).mul(item.current_price)
+        )
+
     def add_op(self, item):
         if item.figi not in self.store_by_figi:
             self.store_by_figi[item.figi] = Amount()
@@ -84,12 +109,15 @@ class ItemStore(object):
         #    self.store_by_name[item.name] = Amount()
 
         # self.op_counter += 1
+        # if item.figi == "BBG012YQ6P43":
         self.store_by_figi[item.figi].add(Amount(quantity=item.payment))
         self.store_by_figi[item.figi].add(Amount(quantity=item.commission))
 
     def dump(self):
         for figi, item in self.store_by_figi.items():
-            print(figi, item, item.op_counter)
+            print("{:20}{:20}{:5} {:40}".format(
+                figi, str(item), item.op_counter, self.figi_to_name.get(figi, figi)
+            ))
         print()
 
 
@@ -113,6 +141,8 @@ def calculate_total_profit(client, days=30, verbose_level=0):
 
         if position.instrument_type != 'share':
             continue
+
+        item_store.add_portfolio_item(position)
 
         print(position)
         print()
@@ -177,7 +207,8 @@ def calculate_total_profit(client, days=30, verbose_level=0):
 
             if (
                 item.type == OperationType.OPERATION_TYPE_WRITING_OFF_VARMARGIN or
-                item.type == OperationType.OPERATION_TYPE_MARGIN_FEE
+                item.type == OperationType.OPERATION_TYPE_MARGIN_FEE or
+                item.type == OperationType.OPERATION_TYPE_BROKER_FEE
             ):
                 continue
 
@@ -185,7 +216,10 @@ def calculate_total_profit(client, days=30, verbose_level=0):
                 print(item)
                 assert False
 
-            print(item.figi)
+            if item.figi == "BBG012YQ6P43":
+                print(item.figi, item.type)
+                print(item)
+                print()
 
             unique_names.add(name)
 
