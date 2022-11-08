@@ -40,6 +40,7 @@ class Item(object):
 
 class Amount(object):
     def __init__(self, units=0, nano=0, quantity=None):
+        self.op_counter = 0
         if quantity is not None:
             self.units = quantity.units
             self.nano = quantity.nano
@@ -49,9 +50,11 @@ class Amount(object):
         self.units = units
         self.nano = nano
 
-    def add(self, other):
+    def add(self, other, inc_counter=True):
         self.units += other.units
         self.nano += other.nano
+        if inc_counter:
+            self.op_counter += 1
 
         # normalize money
         while abs(self.nano) > NANOS_IN_ONE:
@@ -64,23 +67,23 @@ class Amount(object):
                 self.nano += NANOS_IN_ONE
 
     def __str__(self):
-        return "{}.{.5f}".format(self.units, self.nano / float(NANOS_IN_ONE))
+        return "{:20.2f}".format(self.units + self.nano / float(NANOS_IN_ONE))
 
 
 class ItemStore(object):
     def __init__(self):
-        self.store_by_name = {}
         self.store_by_figi = {}
-        self.op_counter = 0
+        self.figi_to_name = {}
 
     def add_op(self, item):
         if item.figi not in self.store_by_figi:
             self.store_by_figi[item.figi] = Amount()
 
-        if item.name not in self.store_by_name:
-            self.store_by_name[item.name] = Amount()
+        self.figi_to_name[item.figi] = item.name
+        # if item.name not in self.store_by_name:
+        #    self.store_by_name[item.name] = Amount()
 
-        self.op_counter += 1
+        # self.op_counter += 1
         self.store_by_figi[item.figi].add(Amount(quantity=item.payment))
         self.store_by_figi[item.figi].add(Amount(quantity=item.commission))
 
@@ -236,6 +239,8 @@ def calculate_total_profit(client, days=30, verbose_level=0):
         "Total commission:",
         total_commission_units + total_nano / NANOS_IN_ONE
     ))
+
+    item_store.dump()
 
 
 def main():
